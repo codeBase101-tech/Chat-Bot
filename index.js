@@ -53,7 +53,13 @@ async function processRpsMove(sock, sender, userChoice) {
 }
 
 // ============================================================================
-// 2. YOUR MAIN BOT FUNCTION
+// BANKING SYSTEM
+// ============================================================================
+
+
+
+// ============================================================================
+// 2. MAIN BOT FUNCTION
 // ============================================================================
 async function startBot() {
   const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
@@ -62,7 +68,7 @@ async function startBot() {
   // 3. Save login credentials
   sock.ev.on('creds.update', saveCreds);
 
-  // 4. Handle connection events (THIS IS WHAT YOU HAVE IN YOUR SCREENSHOT)
+  
   // 4. Handle connection events
   sock.ev.on('connection.update', (update) => {
     const { connection, lastDisconnect, qr } = update;
