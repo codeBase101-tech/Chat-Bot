@@ -1,14 +1,16 @@
 {
   "179624692691098@lid": {
-    "playerName": "Master",
-    "registeredPlayer": true,
-    "accountBalance": 20005000,
-    "wallet": 100
+    "playerName": "Raphael",
+    "playerBankAccount": true,
+    "playerBankBalance": 19980000,
+    "playerWallet": 25000,
+    "playerStatus": "Active"
   },
   "267804783689741@lid": {
-    "playerName": "Master",
-    "registeredPlayer": true,
-    "accountBalance": 25,
-    "wallet": 100
+    "playerName": "Mumba",
+    "playerBankAccount": true,
+    "playerBankBalance": 20000000,
+    "playerWallet": 500,
+    "playerStatus": "Active"
   }
 }

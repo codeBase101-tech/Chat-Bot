@@ -2,16 +2,22 @@ import makeWASocket, { useMultiFileAuthState, DisconnectReason } from '@whiskeys
 import qrcode from 'qrcode-terminal';
 import P from 'pino';
 import fs from 'fs/promises';
+import fsSync from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import ytSearch from 'yt-search';
+import { createRequire } from 'module';
 
-// Setup file path for text database persistence (like a local JSON file)
+const require = createRequire(import.meta.url);
+const ytdlMod = require('@distube/ytdl-core');
+const ytdl = ytdlMod.default || ytdlMod;
+
+// Setup file path for text database persistence (local JSON file)
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const DB_FILE = path.join(__dirname, 'database.json');
 
 // --- DATABASE HELPER FUNCTIONS (Text File Persistence) ---
-// Asynchronously loads the JSON database file (comparable to reading a C++ file stream)
 async function loadDatabase() {
     try {
         const data = await fs.readFile(DB_FILE, 'utf8');
@@ -22,7 +28,6 @@ async function loadDatabase() {
     }
 }
 
-// Asynchronously saves data back into the text file
 async function saveDatabase(db) {
     await fs.writeFile(DB_FILE, JSON.stringify(db, null, 2), 'utf8');
 }
@@ -49,11 +54,9 @@ async function processRpsMove(sock, sender, userChoice) {
         return;
     }
 
-    // Pick computer move
     const moves = Object.keys(RPS_MOVES);
     const botChoice = moves[Math.floor(Math.random() * moves.length)];
 
-    // Determine Winner
     let outcome = '';
     if (userChoice === botChoice) {
         outcome = "It's a tie! 👔";
@@ -80,14 +83,12 @@ async function startBot() {
         logger: P({ level: 'silent' })
     });
 
-    // Save login credentials
     sock.ev.on('creds.update', saveCreds);
 
-    // Handle connection events
+    // Handle connection & QR Code events
     sock.ev.on('connection.update', (update) => {
         const { connection, lastDisconnect, qr } = update;
 
-        // Display QR code whenever Baileys emits it
         if (qr) {
             console.log('\n📱 Scan this QR code with WhatsApp:');
             qrcode.generate(qr, { small: true });
@@ -115,26 +116,37 @@ async function startBot() {
         if (!msg.message || msg.key.fromMe) return;
 
         const sender = msg.key.remoteJid;
+        const pushName = msg.pushName || "Master"; 
         const text = msg.message.conversation || msg.message.extendedTextMessage?.text || '';
-        const userCommand = text.trim().toLowerCase();
+        const trimmedText = text.trim();
+        const userCommand = trimmedText.toLowerCase();
 
-        // Load the database state at the beginning of each message event
+        // Load database at the start of each message event
         const db = await loadDatabase();
 
         // =====================================================================
-        // 1. REGISTRATION GATEKEEPER (Checks if sender has an account)
+        // 0. COMMAND FILTER (Ignore normal chat unless it starts with '!')
+        // =====================================================================
+        const isRegistered = db[sender] ? db[sender].playerBankAccount : false;
+        if (!trimmedText.startsWith('!')) {
+            if (isRegistered && !userSessions.has(sender)) return;
+        }
+
+        // =====================================================================
+        // 1. REGISTRATION GATEKEEPER
         // =====================================================================
         if (!db[sender]) {
             if (userCommand === '!y') {
                 db[sender] = {
-                    playerName: "Master",
-                    registeredPlayer: true,
-                    accountBalance: 0,
-                    wallet: 100
+                    playerName: pushName,
+                    playerBankAccount: true,
+                    playerBankBalance: 0,
+                    playerWallet: 5000, 
+                    playerStatus: "Active"
                 };
                 await saveDatabase(db);
                 await sock.sendMessage(sender, { 
-                    text: `✅ ${db[sender].playerName}'s account has been registered successfully! Type '*!bank*' for more information.` 
+                    text: `✅ ${db[sender].playerName}'s account has been registered successfully! 🏦\nType '*!bank*' for more information.` 
                 });
                 return;
             } 
@@ -151,10 +163,9 @@ async function startBot() {
         }
 
         // =====================================================================
-        // 2. ACTIVE SESSION HANDLER (Handles ongoing game actions like RPS)
+        // 2. ACTIVE SESSION HANDLER (RPS Game Sessions)
         // =====================================================================
         if (userSessions.has(sender)) {
-            // Check if user wants to exit active session at any point
             if (userCommand === 'exit') {
                 userSessions.delete(sender);
                 await sock.sendMessage(sender, {
@@ -165,7 +176,6 @@ async function startBot() {
 
             const session = userSessions.get(sender);
 
-            // Branch A: User is selecting a game from the menu
             if (session.state === 'SELECTING_GAME') {
                 const selectedGame = AVAILABLE_GAMES[userCommand];
 
@@ -185,7 +195,6 @@ async function startBot() {
                 return;
             }
 
-            // Branch B: User is actively playing Rock-Paper-Scissors
             if (session.state === 'PLAYING_RPS') {
                 await processRpsMove(sock, sender, userCommand);
                 return;
@@ -193,15 +202,20 @@ async function startBot() {
         }
 
         // =====================================================================
-        // 3. COMMAND ROUTER (Banking System, Help, & Menu Commands)
+        // 3. COMMAND ROUTER (Help, Games, Bank, Wallet, Deposit, Withdraw, Play)
         // =====================================================================
         if (userCommand === '!help') {
             await sock.sendMessage(sender, { 
-                text: "ℹ️ *Help Menu*\n\n• *!games* - Play interactive games\n• *!bank* - Open bank menu\n• *!balance* - Check account balance\n• *!help* - View help menu" 
+                text: `❇️*${db[sender].playerName}*❇️\nHi! My name is Raphael. How to use me:\n\n` +
+                      `◽ *!games* - Play games\n` +
+                      `◽ *!bank* - Bank information\n` +
+                      `◽ *!wallet balance* - Check wallet cash\n` +
+                      `◽ *!deposit #amount#* - Deposit money into Bank\n` +
+                      `◽ *!withdraw #amount#* - Withdraw from Bank to Wallet\n` +
+                      `◽ *!play <song>* - Search and download YouTube audio` 
             });
         } 
         else if (userCommand === '!games') {
-            // Set state to game selection mode
             userSessions.set(sender, { state: 'SELECTING_GAME' });
 
             let menuText = `🎮 *Available Games Menu* 🎮\n\nReply with the number to play:\n`;
@@ -212,55 +226,129 @@ async function startBot() {
 
             await sock.sendMessage(sender, { text: menuText });
         }
-        // --- BANKING SYSTEM COMMANDS ---
         else if (userCommand === '!bank') {
             await sock.sendMessage(sender, { 
-                text: `🏦 *BANK* 🏦\nWelcome to the Bank Master ${db[sender].playerName}!\n\n` +
-                      `• \`!balance\` - Check your balance\n` +
-                      `• \`!deposit <amount>\` - Deposit cash to bank\n` +
-                      `• \`!withdraw <amount>\` - Withdraw from bank` 
+                text: `🏦 *BANK* 🏦\n\nWelcome To The Bank ${db[sender].playerName}!!!\nHow To Use The Bank:\n\n` +
+                      `◽ \`!deposit #amount#\` - Deposit money into the Bank\n` +
+                      `◽ \`!withdraw #amount#\` - Withdraw from Bank to Wallet\n` +
+                      `◽ \`!balance\` - Check bank balance\n\n` +
+                      `💰 *WALLET* 💰\n` +
+                      `▪️ Use wallet to play games (Max capacity: $50,000)` 
             });
         }
         else if (userCommand === '!balance') {
-            const balance = db[sender].accountBalance;
-            await sock.sendMessage(sender, { text: `💰 ${db[sender].playerName}'s account balance: $${balance}` });
+            const balance = db[sender].playerBankBalance;
+            await sock.sendMessage(sender, { text: `💰 ${db[sender].playerName}'s Bank account balance: $${balance}` });
+        }
+        else if (userCommand === '!wallet balance') {
+            const walletBalance = db[sender].playerWallet;
+            await sock.sendMessage(sender, { text: `👛 Wallet Balance: $${walletBalance}` });
         }
         else if (userCommand.startsWith('!deposit')) {
             const args = text.trim().split(' ');
             const amount = parseInt(args[1]);
 
             if (isNaN(amount) || amount <= 0) {
-                await sock.sendMessage(sender, { text: "⚠️ Please specify a valid amount to deposit. Example: `!deposit 50`" });
+                await sock.sendMessage(sender, { text: "⚠️ Please specify a valid amount. Example: `!deposit 500`" });
                 return;
             }
 
-            db[sender].accountBalance += amount;
-            await saveDatabase(db); // Save updated balance to database.json instantly
-            await sock.sendMessage(sender, { text: `Your deposit was successful ✅\nNew Balance: $${db[sender].accountBalance}` });
+            if (amount > db[sender].playerWallet) {
+                await sock.sendMessage(sender, { text: "❌ You don't have enough money in your Wallet!" });
+                return;
+            }
+
+            db[sender].playerWallet -= amount;
+            db[sender].playerBankBalance += amount;
+            await saveDatabase(db);
+
+            await sock.sendMessage(sender, { 
+                text: `Your deposit was successful ✅\nNew Bank Balance: $${db[sender].playerBankBalance}\nWallet Balance: $${db[sender].playerWallet}` 
+            });
         }
         else if (userCommand.startsWith('!withdraw')) {
             const args = text.trim().split(' ');
             const amount = parseInt(args[1]);
 
             if (isNaN(amount) || amount <= 0) {
-                await sock.sendMessage(sender, { text: "⚠️ Please specify a valid amount to withdraw. Example: `!withdraw 50`" });
+                await sock.sendMessage(sender, { text: "⚠️ Please specify a valid amount. Example: `!withdraw 500`" });
                 return;
             }
 
-            // Check if player has enough balance (matching your flowchart logic)
-            if (amount > db[sender].accountBalance) {
-                await sock.sendMessage(sender, { text: "❌ You don't have enough money in your account!" });
+            if (amount > db[sender].playerBankBalance) {
+                await sock.sendMessage(sender, { text: "❌ You don't have enough money in your Bank account!" });
                 return;
             }
 
-            db[sender].accountBalance -= amount;
-            await saveDatabase(db); // Save updated balance to database.json
-            await sock.sendMessage(sender, { text: `✅ $${amount} has been withdrawn successfully!` });
+            if (amount + db[sender].playerWallet > 50000) {
+                await sock.sendMessage(sender, { text: "⚠️ *Withdraw Unsuccessful!!!* Cannot exceed $50,000 capacity." });
+                return;
+            }
+
+            db[sender].playerBankBalance -= amount;
+            db[sender].playerWallet += amount;
+            await saveDatabase(db);
+
+            await sock.sendMessage(sender, { 
+                text: `✅ $${amount} has been withdrawn successfully to your Wallet!\nWallet Balance: $${db[sender].playerWallet}` 
+            });
+        }
+        else if (userCommand.startsWith('!play')) {
+            const query = text.replace(/^!play/i, '').trim();
+
+            if (!query) {
+                await sock.sendMessage(sender, { text: "⚠️ Please specify a song name. Example: `!play Shape of You`" });
+                return;
+            }
+
+            await sock.sendMessage(sender, { text: `🔍 Searching YouTube for *${query}*...` });
+
+            try {
+                const searchResult = await ytSearch(query);
+                const videos = searchResult.videos;
+
+                if (!videos || videos.length === 0) {
+                    await sock.sendMessage(sender, { text: "❌ No results found for that search." });
+                    return;
+                }
+
+                const topVideo = videos[0];
+                await sock.sendMessage(sender, { text: `🎵 Downloading *${topVideo.title}* (${topVideo.timestamp})... Please wait ⏳` });
+
+                const audioFilePath = path.join(__dirname, `temp_${Date.now()}.mp3`);
+
+                const stream = ytdl(topVideo.url, { filter: 'audioonly', quality: 'highestaudio' });
+                const writeStream = fsSync.createWriteStream(audioFilePath);
+
+                stream.pipe(writeStream);
+
+                writeStream.on('finish', async () => {
+                    await sock.sendMessage(sender, { 
+                        audio: { url: audioFilePath }, 
+                        mimetype: 'audio/mp4', 
+                        ptt: false 
+                    });
+
+                    try {
+                        await fs.unlink(audioFilePath);
+                    } catch (err) {
+                        console.error("Cleanup error:", err);
+                    }
+                });
+
+                stream.on('error', async (err) => {
+                    console.error(err);
+                    await sock.sendMessage(sender, { text: "❌ Error downloading the audio stream." });
+                });
+
+            } catch (error) {
+                console.error(error);
+                await sock.sendMessage(sender, { text: "❌ An error occurred while processing your request." });
+            }
         }
         else {
-            // Default fallback greeting for unrecognized text
             await sock.sendMessage(sender, { 
-                text: "Hi! Type *!help* to see available commands or *!bank* for banking." 
+                text: "❌ Unknown command. Type *!help* to see available commands." 
             });
         }
     });
